@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Competitor Monitor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{--bg:#f2f4f7;--ink:#0f1a2b;--mute:#5b6577;--line:#d3d9e2;--card:#fff;--accent:#1646d6;--ok:#0b7a4b;--warn:#a15c00;--bad:#b42318}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1522;--ink:#e8ecf3;--mute:#97a2b5;--line:#26324a;--card:#141d2e;--accent:#7ea2ff;--ok:#4cc38a;--warn:#f0b24d;--bad:#ff8a7a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Instrument Sans",system-ui,sans-serif}
+main{max-width:920px;margin:0 auto;padding:40px 20px 80px}
+h1{font-size:clamp(28px,5vw,44px);line-height:1.1;margin:0 0 8px;letter-spacing:-.02em}
+.lede{color:var(--mute);max-width:60ch;margin:0 0 28px}
+form{display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px}
+label{display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:600}
+label span{color:var(--mute);font-weight:400}
+input{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.full{grid-column:1/-1}
+button{font:inherit;font-weight:600;padding:11px 18px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;justify-self:start}
+@media (prefers-color-scheme:dark){button{color:#0e1522}}
+button:disabled{opacity:.6;cursor:wait}
+#out{margin-top:28px}
+.banner{padding:12px 14px;border-left:4px solid var(--accent);background:var(--card);border-radius:0 6px 6px 0;margin-bottom:16px}
+.banner.bad{border-color:var(--bad)}.banner.warn{border-color:var(--warn)}.banner.ok{border-color:var(--ok)}
+h2{font-size:18px;margin:26px 0 10px}
+.post{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:10px}
+.post a{font-weight:600;color:var(--ink);text-decoration-color:var(--accent);text-underline-offset:3px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:6px;font-size:14px;color:var(--mute);font-variant-numeric:tabular-nums}
+.meta b{color:var(--ink)}
+.desc{margin:6px 0 0;font-size:14px;color:var(--mute)}
+.tag{display:inline-block;font-size:12px;font-weight:600;color:var(--accent);border:1px solid var(--accent);border-radius:99px;padding:0 8px;margin-left:8px}
+ul{margin:6px 0 0;padding-left:20px}
+@media (max-width:640px){form{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+  <h1>See what your competitors published this week.</h1>
+  <p class="lede">Enter a domain. We scrape its blog, flag posts we haven't seen before, look up each post's target keyword and search volume, watch the pricing page, and send you the summary.</p>
+
+  <form id="f">
+    <label class="full">Competitor domain
+      <input id="domain" required placeholder="ahrefs.com" autocomplete="off" inputmode="url">
+    </label>
+    <label>Slack webhook <span>optional, overrides the server default</span>
+      <input id="slack" placeholder="https://hooks.slack.com/services/…">
+    </label>
+    <label>Email <span>optional, needs SMTP on the server</span>
+      <input id="email" type="email" placeholder="you@company.com">
+    </label>
+    <button id="go" class="full">Check now</button>
+  </form>
+
+  <div id="out" aria-live="polite"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const vol = v => v == null ? "not available" : Number(v).toLocaleString() + " / mo";
+
+function postHtml(p, isNew) {
+  return `<div class="post"><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>${isNew ? '<span class="tag">new</span>' : ""}
+    <div class="meta"><span>Published <b>${esc(p.published || "unknown")}</b></span><span>Keyword <b>${esc(p.keyword || "n/a")}</b></span><span>Search volume <b>${vol(p.volume)}</b></span></div>
+    ${p.description ? `<p class="desc">${esc(p.description)}</p>` : ""}</div>`;
+}
+
+function render(r) {
+  const cls = r.status === "ok" ? "ok" : (r.status === "blocked" || r.status === "unreachable" ? "bad" : "warn");
+  let h = `<div class="banner ${cls}"><b>${esc(r.domain)}</b>: ${esc(r.message)}</div>`;
+  if (r.enrichment_warning) h += `<div class="banner warn">${esc(r.enrichment_warning)}</div>`;
+  if (r.new_posts.length) h += `<h2>${r.first_run ? "Latest posts (initial scan)" : "New posts"}</h2>` + r.new_posts.map(p => postHtml(p, !r.first_run)).join("");
+  const pr = r.pricing;
+  if (pr) {
+    const labels = {baseline: "Pricing page saved as the baseline.", unchanged: "Pricing unchanged.", changed: "Pricing changed.", content_changed: "Pricing page text changed, prices are the same.", not_found: "No pricing page found.", error: "Pricing check failed."};
+    h += `<h2>Pricing</h2><div class="banner ${pr.status === "changed" ? "warn" : ""}">${labels[pr.status] || ""} ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.url)}</a>` : ""} ${esc(pr.note || "")}
+      ${pr.added?.length ? `<ul><li>Added: ${pr.added.map(esc).join(", ")}</li>${pr.removed.length ? `<li>Removed: ${pr.removed.map(esc).join(", ")}</li>` : ""}</ul>` : (pr.removed?.length ? `<ul><li>Removed: ${pr.removed.map(esc).join(", ")}</li></ul>` : "")}
+      ${pr.prices?.length && pr.status !== "changed" ? `<div class="meta">Prices seen: ${pr.prices.map(esc).join(", ")}</div>` : ""}</div>`;
+  }
+  if (r.alerts.length) h += `<h2>Alert</h2>` + r.alerts.map(a => `<div class="banner ${a.ok ? "ok" : "warn"}">${esc(a.channel)}: ${a.ok ? "sent" : esc(a.error)}</div>`).join("");
+  $("out").innerHTML = h;
+}
+
+$("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("go").disabled = true; $("go").textContent = "Scraping…";
+  $("out").innerHTML = '<div class="banner">Crawling the site. This can take up to a minute.</div>';
+  try {
+    const res = await fetch("/api/check", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({domain: $("domain").value, slack_webhook: $("slack").value, email: $("email").value})});
+    const raw = await res.text();
+    let data;
+    try { data = JSON.parse(raw); } catch {
+      throw new Error(res.status === 504 || /timed? ?out/i.test(raw)
+        ? "The check timed out on the server. Retry, or try a competitor with a smaller blog."
+        : `Server error (HTTP ${res.status}): ${raw.replace(/<[^>]+>/g, " ").trim().slice(0, 200) || "empty response"}`);
+    }
+    if (!res.ok) throw new Error(data.detail || "Request failed");
+    render(data);
+  } catch (err) {
+    $("out").innerHTML = `<div class="banner bad">${esc(err.message)}</div>`;
+  } finally { $("go").disabled = false; $("go").textContent = "Check now"; }
+});
+</script>
+</body>
+</html>
