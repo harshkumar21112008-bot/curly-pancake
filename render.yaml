@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: competitor-monitor
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATAFORSEO_LOGIN
+        sync: false
+      - key: DATAFORSEO_PASSWORD
+        sync: false
+      - key: DATAFORSEO_BASE
+        value: https://sandbox.dataforseo.com
+      - key: SLACK_WEBHOOK_URL
+        sync: false
